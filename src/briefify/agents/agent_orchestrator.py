@@ -2,9 +2,12 @@ import os
 import json
 from typing import Dict, Any
 from google import genai
+from google.genai import types
 
 # Import Phase 1 BigQuery tool via package-relative import
 from briefify.mcp.telemetry_mcp import query_account_usage
+from briefify.schemas.brief_schema import SalesBriefSchema
+from briefify.publishers.publisher import LocalCMSPublisher
 
 
 def fetch_telemetry_tool(company_name: str) -> str:
@@ -51,7 +54,7 @@ Provide 3 concrete, specific talking points or proposals for the account rep.
 """
 
 
-def run_agentic_workflow(company_name: str) -> Dict[str, Any]:
+def run_agentic_workflow(company_name: str, account_id: str = "ACC-1001") -> Dict[str, Any]:
     """Orchestrates sequential execution across BigQuery extraction and Gemini 3.5 Flash synthesis."""
     print(f"\n[Pipeline Triggered] Processing Account: {company_name}")
     
@@ -89,14 +92,28 @@ def run_agentic_workflow(company_name: str) -> Dict[str, Any]:
     
     response = client.models.generate_content(
         model="gemini-3.5-flash",
-        contents=prompt
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=SalesBriefSchema,
+            temperature=0.1
+        )
     )
 
+    # Parse validated JSON into Pydantic model
+    validated_brief = SalesBriefSchema.model_validate_json(response.text)
+    
+    # Step 3: Publish via Publisher Adapter
+    publisher = LocalCMSPublisher()
+    artifact_location = publisher.publish(account_id, validated_brief)
+    
     print(" [Pipeline Complete] Strategic brief generated successfully.\n")
     return {
         "status": "success",
         "company_name": company_name,
-        "brief": response.text
+        "brief": response.text,
+        "published_location": artifact_location,
+        "data": validated_brief.model_dump()
     }
 
 
