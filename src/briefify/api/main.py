@@ -31,7 +31,7 @@ def async_agent_task(job_id: str, company_name: str, account_id: str):
     JOB_LEDGER[job_id]["status"] = "processing"
     JOB_LEDGER[job_id]["started_at"] = time.time()
 
-    result = run_agentic_workflow(company_name)
+    result = run_agentic_workflow(company_name, job_id=job_id, account_id=account_id)
 
     if result.get("status") == "error":
         JOB_LEDGER[job_id]["status"] = "failed"

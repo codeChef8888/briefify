@@ -21,10 +21,10 @@ def log_execution_event(
     
     # Extract GenAI token usage metadata
     prompt_tokens = getattr(usage_metadata, "prompt_token_count", 0) if usage_metadata else 0
-    completion_tokens = getattr(usage_metadata, "candidates_token_count", 0) if usage_metadata else 0
+    completion_tokens = getattr(usage_metadata, "completion_token_count", 0) if usage_metadata else 0
     total_tokens = getattr(usage_metadata, "total_token_count", 0) if usage_metadata else 0
 
-    # Calculate estimated cost (Gemini 2.5 Flash pricing: ~$0.075 / 1M input tokens, $0.30 / 1M output tokens)
+    # Calculate estimated cost (Gemini 3.5 Flash pricing: ~$0.075 / 1M input tokens, $0.30 / 1M output tokens)
     estimated_cost_usd = (prompt_tokens * 0.000000075) + (completion_tokens * 0.00000030)
 
     log_entry = {
