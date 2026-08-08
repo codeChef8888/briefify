@@ -21,3 +21,6 @@ build/
 
 # Environment variables
 .env
+
+# Agent Briefify Output
+/output
