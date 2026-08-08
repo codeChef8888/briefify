@@ -1,5 +1,6 @@
 import os
 import json
+import time 
 from typing import Dict, Any
 from google import genai
 from google.genai import types
@@ -8,6 +9,7 @@ from google.genai import types
 from briefify.mcp.telemetry_mcp import query_account_usage
 from briefify.schemas.brief_schema import SalesBriefSchema
 from briefify.publishers.publisher import LocalCMSPublisher
+from briefify.telemetry.ledger import log_execution_event
 
 
 def fetch_telemetry_tool(company_name: str) -> str:
@@ -54,9 +56,11 @@ Provide 3 concrete, specific talking points or proposals for the account rep.
 """
 
 
-def run_agentic_workflow(company_name: str, account_id: str = "ACC-1001") -> Dict[str, Any]:
+def run_agentic_workflow(company_name: str, account_id: str = "ACC-1001", job_id: str = "manual_run") -> Dict[str, Any]:
     """Orchestrates sequential execution across BigQuery extraction and Gemini 3.5 Flash synthesis."""
     print(f"\n[Pipeline Triggered] Processing Account: {company_name}")
+    
+    start_time = time.time()
     
     # Step 1: Extract telemetry via BigQuery tool
     print(" └── Step 1: Data Agent retrieving BigQuery telemetry...")
@@ -106,6 +110,18 @@ def run_agentic_workflow(company_name: str, account_id: str = "ACC-1001") -> Dic
     # Step 3: Publish via Publisher Adapter
     publisher = LocalCMSPublisher()
     artifact_location = publisher.publish(account_id, validated_brief)
+    
+    latency_ms = (time.time() - start_time) * 1000
+
+    # Step 4: Write FinOps Log Entry
+    log_entry = log_execution_event(
+        job_id=job_id,
+        company_name=company_name,
+        account_id=account_id,
+        latency_ms=latency_ms,
+        usage_metadata=getattr(response, "usage_metadata", None),
+        status="success"
+    )
     
     print(" [Pipeline Complete] Strategic brief generated successfully.\n")
     return {
