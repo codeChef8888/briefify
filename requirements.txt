@@ -1,0 +1,15 @@
+# This file is for legacy tooling compatibility only.
+# Source of truth: pyproject.toml + uv.lock
+# To regenerate: uv export --no-hashes > requirements.txt
+
+# Runtime dependencies
+fastmcp>=2.0
+google-cloud-bigquery>=3.0
+google-genai>=1.0
+fastapi>=0.110
+pydantic>=2.0
+uvicorn[standard]>=0.29
+
+# Dev/test dependencies
+pytest>=8.0
+pytest-asyncio>=0.23
