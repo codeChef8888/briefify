@@ -5,7 +5,7 @@ from typing import Dict, Any
 from fastapi import FastAPI, HTTPException, BackgroundTasks, status
 from pydantic import BaseModel, Field
 
-from briefify.agents.agent_orchestrator import run_agentic_workflow
+from briefify.agents.agent_orchestrator import run_agentic_workflow_async
 
 app = FastAPI(title="Briefify Agentic AI Webhook Engine", 
               description="Webhook listener triggering BigQuery telemetry extraction and Gemini strategic sales briefs.",
@@ -25,13 +25,13 @@ def health_check() -> Dict[str, str]:
     """Health check endpoint to verify server status."""
     return {"status": "healthy", "service": "Briefify Agentic Engine"}
 
-
-def async_agent_task(job_id: str, company_name: str, account_id: str):
+async def async_agent_task(job_id: str, company_name: str, account_id: str):
     """Background worker executing BigQuery extraction, Gemini synthesis, and publishing."""
     JOB_LEDGER[job_id]["status"] = "processing"
     JOB_LEDGER[job_id]["started_at"] = time.time()
 
-    result = run_agentic_workflow(company_name, job_id=job_id, account_id=account_id)
+    # Await the async pipeline directly without asyncio.run()
+    result = await run_agentic_workflow_async(company_name, job_id=job_id, account_id=account_id)
 
     if result.get("status") == "error":
         JOB_LEDGER[job_id]["status"] = "failed"
@@ -41,7 +41,6 @@ def async_agent_task(job_id: str, company_name: str, account_id: str):
         JOB_LEDGER[job_id]["completed_at"] = time.time()
         JOB_LEDGER[job_id]["execution_time_sec"] = round(time.time() - JOB_LEDGER[job_id]["started_at"], 2)
         JOB_LEDGER[job_id]["result"] = result
-
 
 @app.post("/webhook/crm-event", status_code=status.HTTP_202_ACCEPTED)
 def handle_crm_event(payload: CRMEventPayload, background_tasks: BackgroundTasks) -> Dict[str, Any]:
