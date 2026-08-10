@@ -67,7 +67,7 @@ def query_account_usage(company_name: str) -> str:
             "status": "success",
             "company_name": company_name,
             "records_returned": len(rows),
-            "engineered_features": engineered_features, # Quantitative vectors passed to Gemini
+            "engineered_features": engineered_features.model_dump(), # Quantitative vectors passed to Gemini
             "telemetry": rows
         }, indent=2)
 
