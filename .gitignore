@@ -24,3 +24,6 @@ build/
 
 # Agent Briefify Output
 /output
+
+# github workflows
+.github
