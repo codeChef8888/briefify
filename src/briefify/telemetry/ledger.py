@@ -15,7 +15,8 @@ def log_execution_event(
     latency_ms: float,
     usage_metadata: Any,
     status: str = "success",
-    error_message: str = None
+    error_message: str = None,
+    pipeline_stage: str = "full_pipeline"
 ) -> Dict[str, Any]:
     """Records pipeline execution metrics, token counts, and cost telemetry to an append-only JSONL log."""
     
@@ -33,6 +34,7 @@ def log_execution_event(
         "company_name": company_name,
         "account_id": account_id,
         "status": status,
+        "pipeline_stage": pipeline_stage,
         "latency_ms": round(latency_ms, 2),
         "tokens": {
             "prompt_tokens": prompt_tokens,

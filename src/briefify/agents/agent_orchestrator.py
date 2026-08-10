@@ -105,13 +105,15 @@ async def run_agentic_workflow_async(company_name: str, account_id: str = "ACC-1
         parts=[types.Part(text=f"Analyze sales brief telemetry for account: {company_name}")]
     )
     
-    # Stream ADK execution through Directed Graph
-    async for _ in runner.run_async(
+    # Stream ADK execution through Directed Graph, collecting token usage from events
+    usage_metadata = None
+    async for event in runner.run_async(
         user_id=user_id,
         session_id=session_id,
         new_message=prompt_content
     ):
-        pass
+        if hasattr(event, "usage_metadata") and event.usage_metadata:
+            usage_metadata = event.usage_metadata
 
     # Retrieve output state from the auto-created session
     session = await session_service.get_session(
@@ -138,6 +140,16 @@ async def run_agentic_workflow_async(company_name: str, account_id: str = "ACC-1
     except Exception as e:
         print(f" ❌ [Pipeline Failed] Schema validation error: {e}")
         print(f" 🔍 [Raw LLM Output]: {brief_raw}")
+        latency_ms = (time.time() - start_time) * 1000
+        log_execution_event(
+            job_id=job_id,
+            company_name=company_name,
+            account_id=account_id,
+            latency_ms=latency_ms,
+            usage_metadata=usage_metadata,
+            status="error",
+            error_message=str(e)
+        )
         return {
             "status": "error",
             "company_name": company_name,
@@ -156,7 +168,7 @@ async def run_agentic_workflow_async(company_name: str, account_id: str = "ACC-1
         company_name=company_name,
         account_id=account_id,
         latency_ms=latency_ms,
-        usage_metadata=None,
+        usage_metadata=usage_metadata,
         status="success"
     )
     
