@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List
+from typing import List, Literal
 
 class DetailedTelemetryMetrics(BaseModel):
     seat_utilization_analysis: str = Field(
@@ -25,10 +25,12 @@ class SalesBriefSchema(BaseModel):
     company_name: str = Field(description="Exact target company name")
     contract_tier: str = Field(description="Current subscription contract tier (e.g., Starter, Growth, Enterprise)")
     analysis_date: str = Field(description="Date of analysis formatted as 'Month DD, YYYY'")
-    overall_health_score: int = Field(description="Calculated health score between 1 (severe churn risk) and 100 (flawless growth)")
-    primary_signal: str = Field(
-        description="Must be strictly: 🟢 UPSELL OPPORTUNITY, 🔴 CHURN / ENGAGEMENT RISK, or 🟡 UNTAPPED CAPACITY"
-    )
+    overall_health_score: int = Field(ge=1,le=100,description="Calculated health score between 1 (severe churn risk) and 100 (flawless growth)")
+    primary_signal: Literal[
+            "🟢 UPSELL OPPORTUNITY", 
+            "🔴 CHURN / ENGAGEMENT RISK", 
+            "🟡 UNTAPPED CAPACITY"
+        ] = Field(description="Categorical health signal derived from historical telemetry heuristics")
     executive_summary: str = Field(
         description=(
             "A rich, multi-sentence executive summary (4-5 sentences) synthesizing account health, "
