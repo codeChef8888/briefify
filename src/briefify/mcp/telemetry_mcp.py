@@ -2,6 +2,8 @@ import json
 
 from fastmcp import FastMCP
 from google.cloud import bigquery
+
+from briefify.telemetry.feature_engineering import compute_telemetry_features
 from briefify.config import (
     GCP_PROJECT_ID,
     DATASET_ID,
@@ -57,11 +59,15 @@ def query_account_usage(company_name: str) -> str:
         for r in rows:
             if "snapshot_month" in r and r["snapshot_month"]:
                 r["snapshot_month"] = str(r["snapshot_month"])
-
+                
+        # Compute ML quantitative features
+        engineered_features = compute_telemetry_features(rows)
+        print(f"[Telemetry MCP] Computed engineered features for {company_name}: {engineered_features}")
         return json.dumps({
             "status": "success",
             "company_name": company_name,
             "records_returned": len(rows),
+            "engineered_features": engineered_features, # Quantitative vectors passed to Gemini
             "telemetry": rows
         }, indent=2)
 
