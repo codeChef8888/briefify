@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  briefify-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: briefify_app
+    env_file:
+    - .env
+    ports:
+      - "8000:8000"
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json
+    volumes:
+      # Persist generated briefs and execution logs to host system
+      - ./output:/app/output
+      # Mount local GCP authentication credentials read-only
+      - ${HOME}/.config/gcloud:/root/.config/gcloud:ro
+    restart: unless-stopped
