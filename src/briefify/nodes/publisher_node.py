@@ -2,18 +2,10 @@ from pathlib import Path
 from google.adk import Event
 from briefify.schemas.brief_schema import SalesBriefSchema
 
-async def publish_brief_node(node_input: dict) -> Event:
-    """Node 3: Writes the validated SalesBrief to disk and updates CRM.
-    
-    Cost: $0 LLM Tokens.
-    """
-    brief = SalesBriefSchema.model_validate(node_input)
-    
-    output_dir = Path("output/briefs")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    file_path = output_dir / f"{brief.company_name.lower().replace(' ', '_')}_brief.md"
-    
-    markdown_content = f"""# 📊 Executive Strategic Brief: {brief.company_name}
+
+def _build_brief_markdown(brief: SalesBriefSchema) -> str:
+    """Build canonical markdown used by both storage and frontend rendering."""
+    return f"""# 📊 Executive Strategic Brief: {brief.company_name}
 **Contract Tier:** {brief.contract_tier} | **Analysis Date:** {brief.analysis_date} | **Health Score:** {brief.overall_health_score}/100
 
 ---
@@ -35,12 +27,38 @@ async def publish_brief_node(node_input: dict) -> Event:
 ## 4. Actionable Next Steps for Sales Call
 {chr(10).join(brief.actionable_talking_points)}
 """
-    with open(file_path, "w", encoding="utf-8") as f:
-        f.write(markdown_content)
-        
+
+async def publish_brief_node(node_input: dict) -> Event:
+    """Node 3: Writes the validated SalesBrief to disk and updates CRM.
+    
+    Cost: $0 LLM Tokens.
+    """
+    try:
+        brief = SalesBriefSchema.model_validate(node_input)
+    except Exception as exc:
+        return Event(output={
+            "status": "error",
+            "message": f"Publisher validation failed: {str(exc)}"
+        })
+
+    output_dir = Path("output/briefs")
+    file_path = output_dir / f"{brief.company_name.lower().replace(' ', '_')}_brief.md"
+    markdown_content = _build_brief_markdown(brief)
+
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(markdown_content)
+    except OSError as exc:
+        return Event(output={
+            "status": "error",
+            "message": f"Publisher file write failed: {str(exc)}"
+        })
+
     return Event(output={
         "status": "published",
         "company_name": brief.company_name,
         "artifact_location": str(file_path.absolute()),
+        "brief": markdown_content,
         "brief_data": brief.model_dump()
     })
