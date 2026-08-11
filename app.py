@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import time
+import uuid
 import pandas as pd
 import plotly.express as px
 
@@ -124,7 +125,8 @@ with col_right:
             "event_type": "account.status_changed",
             "company_name": selected_company,
             "status": crm_status,
-            "account_id": account_id
+            "account_id": account_id,
+            "event_id": f"evt_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}"
         }
         
         target_endpoint = f"{backend_base_url.rstrip('/')}/webhook/crm-event"
