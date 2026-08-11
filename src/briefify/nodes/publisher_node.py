@@ -1,6 +1,7 @@
 from pathlib import Path
 from google.adk import Event
 from briefify.schemas.brief_schema import SalesBriefSchema
+from briefify.schemas.error_contract import build_error
 
 
 def _detect_refusal(node_input: dict) -> str | None:
@@ -57,19 +58,23 @@ async def publish_brief_node(node_input: dict) -> Event:
     """
     refusal_reason = _detect_refusal(node_input)
     if refusal_reason:
-        return Event(output={
-            "status": "refused",
-            "code": "MODEL_REFUSAL",
-            "message": refusal_reason,
-        })
+        return Event(output=build_error(
+            code="MODEL_REFUSAL",
+            message=refusal_reason,
+            stage="publisher_node",
+            retryable=False,
+            status="refused",
+        ))
 
     try:
         brief = SalesBriefSchema.model_validate(node_input)
     except Exception as exc:
-        return Event(output={
-            "status": "error",
-            "message": f"Publisher validation failed: {str(exc)}"
-        })
+        return Event(output=build_error(
+            code="PUBLISHER_VALIDATION_FAILED",
+            message=f"Publisher validation failed: {str(exc)}",
+            stage="publisher_node",
+            retryable=False,
+        ))
 
     output_dir = Path("output/briefs")
     file_path = output_dir / f"{brief.company_name.lower().replace(' ', '_')}_brief.md"
@@ -80,10 +85,12 @@ async def publish_brief_node(node_input: dict) -> Event:
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(markdown_content)
     except OSError as exc:
-        return Event(output={
-            "status": "error",
-            "message": f"Publisher file write failed: {str(exc)}"
-        })
+        return Event(output=build_error(
+            code="PUBLISHER_FILE_WRITE_FAILED",
+            message=f"Publisher file write failed: {str(exc)}",
+            stage="publisher_node",
+            retryable=True,
+        ))
 
     return Event(output={
         "status": "published",

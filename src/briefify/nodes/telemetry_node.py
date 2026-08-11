@@ -12,6 +12,7 @@ from briefify.config import (
     TABLE_ID,
 )
 from briefify.schemas.brief_schema import AccountTrigger
+from briefify.schemas.error_contract import build_error
 
 
 MAX_NODE_INPUT_BYTES = int(os.getenv("TELEMETRY_NODE_MAX_INPUT_BYTES", "8192"))
@@ -21,12 +22,12 @@ BQ_QUERY_TIMEOUT_SEC = float(os.getenv("BQ_QUERY_TIMEOUT_SEC", "15"))
 
 
 def _error_event(code: str, message: str, retryable: bool = False) -> Event:
-    return Event(output={
-        "status": "error",
-        "code": code,
-        "message": message,
-        "retryable": retryable,
-    })
+    return Event(output=build_error(
+        code=code,
+        message=message,
+        stage="telemetry_node",
+        retryable=retryable,
+    ))
 
 
 def _extract_text_from_content(node_input: Any) -> str | None:
