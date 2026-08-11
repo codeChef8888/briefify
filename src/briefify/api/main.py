@@ -26,6 +26,9 @@ def health_check() -> Dict[str, str]:
 
 async def async_agent_task(job_id: str, company_name: str, account_id: str):
     """Background worker executing BigQuery extraction, Gemini synthesis, and publishing."""
+    if job_id not in JOB_LEDGER:
+        return
+
     JOB_LEDGER[job_id]["status"] = "processing"
     JOB_LEDGER[job_id]["started_at"] = time.time()
 
@@ -35,7 +38,8 @@ async def async_agent_task(job_id: str, company_name: str, account_id: str):
 
         if result.get("status") == "error":
             JOB_LEDGER[job_id]["status"] = "failed"
-            JOB_LEDGER[job_id]["error"] = result.get("message") or result.get("brief")
+            JOB_LEDGER[job_id]["error"] = result.get("message") or "Unknown workflow failure"
+            JOB_LEDGER[job_id]["result"] = result
         else:
             JOB_LEDGER[job_id]["status"] = "completed"
             JOB_LEDGER[job_id]["result"] = result
