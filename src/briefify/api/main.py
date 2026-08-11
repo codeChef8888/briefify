@@ -1,8 +1,11 @@
+import os
 import time
 import uuid
+from typing import Literal
 from typing import Dict, Any
-from fastapi import FastAPI, HTTPException, BackgroundTasks, status
-from pydantic import BaseModel, Field
+from fastapi import FastAPI, HTTPException, BackgroundTasks, status, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, ConfigDict
 
 from briefify.agents.agent_orchestrator import run_agentic_workflow_async
 
@@ -10,14 +13,51 @@ app = FastAPI(title="Briefify Agentic AI Webhook Engine",
               description="Webhook listener triggering BigQuery telemetry extraction and Gemini strategic sales briefs.",
               version="2.0.0")
 
+MAX_WEBHOOK_PAYLOAD_BYTES = int(os.getenv("MAX_WEBHOOK_PAYLOAD_BYTES", "16384"))
+
 # In-memory job state ledger (Can be swapped with Redis in multi-worker production)
 JOB_LEDGER: Dict[str, Dict[str, Any]] = {}
 
 class CRMEventPayload(BaseModel):
-    event_type: str = Field(..., example="account.status_changed")
-    company_name: str = Field(..., example="Acme Corp")
-    status: str = Field(..., example="Qualified")
-    account_id: str = Field(default="ACC-UNKNOWN", example="ACC-1001")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    event_type: str = Field(
+        ...,
+        min_length=3,
+        max_length=64,
+        pattern=r"^[a-zA-Z0-9._-]+$",
+        example="account.status_changed",
+    )
+    company_name: str = Field(..., min_length=2, max_length=120, example="Acme Corp")
+    status: Literal["Qualified", "Prospect", "Negotiation"] = Field(..., example="Qualified")
+    account_id: str = Field(
+        default="ACC-UNKNOWN",
+        min_length=4,
+        max_length=40,
+        pattern=r"^ACC-[A-Za-z0-9-]+$",
+        example="ACC-1001",
+    )
+
+
+@app.middleware("http")
+async def enforce_payload_size_limit(request: Request, call_next):
+    """Reject oversized webhook payloads early to bound memory and parse costs."""
+    if request.method == "POST" and request.url.path == "/webhook/crm-event":
+        content_length = request.headers.get("content-length")
+        if content_length and int(content_length) > MAX_WEBHOOK_PAYLOAD_BYTES:
+            return JSONResponse(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                content={"status": "error", "message": "Webhook payload exceeds allowed size"},
+            )
+
+        body = await request.body()
+        if len(body) > MAX_WEBHOOK_PAYLOAD_BYTES:
+            return JSONResponse(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                content={"status": "error", "message": "Webhook payload exceeds allowed size"},
+            )
+
+    return await call_next(request)
 
 @app.get("/health")
 def health_check() -> Dict[str, str]:
