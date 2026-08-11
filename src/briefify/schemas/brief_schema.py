@@ -1,6 +1,10 @@
 from pydantic import BaseModel, Field
 from typing import List, Literal
 
+class AccountTrigger(BaseModel):
+    account_id: str = Field(description="Unique CRM Account Identifier")
+    company_name: str = Field(description="Target Account Company Name")
+
 class DetailedTelemetryMetrics(BaseModel):
     seat_utilization_analysis: str = Field(
         description=(
