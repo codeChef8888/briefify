@@ -3,6 +3,28 @@ from google.adk import Event
 from briefify.schemas.brief_schema import SalesBriefSchema
 
 
+def _detect_refusal(node_input: dict) -> str | None:
+    """Best-effort refusal detection for model safety/policy blocks."""
+    if not isinstance(node_input, dict):
+        return None
+
+    direct_refusal = node_input.get("refusal") or node_input.get("refusal_reason")
+    if isinstance(direct_refusal, str) and direct_refusal.strip():
+        return direct_refusal.strip()
+
+    text_blobs = [
+        str(node_input.get("message", "")),
+        str(node_input.get("error", "")),
+        str(node_input.get("text", "")),
+    ]
+    combined = " ".join(text_blobs).lower()
+    refusal_markers = ("refus", "safety", "policy", "blocked", "content restriction")
+    if any(marker in combined for marker in refusal_markers):
+        return "Strategist model refused to generate a brief due to safety/policy constraints"
+
+    return None
+
+
 def _build_brief_markdown(brief: SalesBriefSchema) -> str:
     """Build canonical markdown used by both storage and frontend rendering."""
     return f"""# 📊 Executive Strategic Brief: {brief.company_name}
@@ -33,6 +55,14 @@ async def publish_brief_node(node_input: dict) -> Event:
     
     Cost: $0 LLM Tokens.
     """
+    refusal_reason = _detect_refusal(node_input)
+    if refusal_reason:
+        return Event(output={
+            "status": "refused",
+            "code": "MODEL_REFUSAL",
+            "message": refusal_reason,
+        })
+
     try:
         brief = SalesBriefSchema.model_validate(node_input)
     except Exception as exc:
