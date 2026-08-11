@@ -81,6 +81,7 @@ async def run_agentic_workflow_async(company_name: str, account_id: str = "ACC-1
     
     # Stream ADK execution through Directed Graph, collecting token usage from events
     final_output = {}
+    terminal_error: str | None = None
     usage_metadata = None
     
     try:
@@ -94,8 +95,11 @@ async def run_agentic_workflow_async(company_name: str, account_id: str = "ACC-1
                 
             # Capture terminal output event from publish_brief_node
             out = getattr(event, "output", None)
-            if isinstance(out, dict) and out.get("status") == "published":
-                final_output = out
+            if isinstance(out, dict):
+                if out.get("status") == "published":
+                    final_output = out
+                elif out.get("status") == "error":
+                    terminal_error = out.get("message") or "Workflow node emitted an error status"
     except Exception as exc:
         latency_ms = (time.time() - start_time) * 1000
         log_execution_event(
@@ -125,6 +129,21 @@ async def run_agentic_workflow_async(company_name: str, account_id: str = "ACC-1
             status="success"
         )
         return final_output
+    if terminal_error:
+        log_execution_event(
+            job_id=job_id,
+            company_name=company_name,
+            account_id=account_id,
+            latency_ms=latency_ms,
+            usage_metadata=usage_metadata,
+            status="error",
+            error_message=terminal_error
+        )
+        return {
+            "status": "error",
+            "company_name": company_name,
+            "message": terminal_error
+        }
     else:
         log_execution_event(
             job_id=job_id,
