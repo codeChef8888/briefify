@@ -1,6 +1,5 @@
 import time
 import uuid
-from pathlib import Path
 from typing import Dict, Any
 from fastapi import FastAPI, HTTPException, BackgroundTasks, status
 from pydantic import BaseModel, Field
@@ -30,17 +29,24 @@ async def async_agent_task(job_id: str, company_name: str, account_id: str):
     JOB_LEDGER[job_id]["status"] = "processing"
     JOB_LEDGER[job_id]["started_at"] = time.time()
 
-    # Await the async pipeline directly without asyncio.run()
-    result = await run_agentic_workflow_async(company_name, job_id=job_id, account_id=account_id)
+    try:
+        # Await the async pipeline directly without asyncio.run()
+        result = await run_agentic_workflow_async(company_name, job_id=job_id, account_id=account_id)
 
-    if result.get("status") == "error":
+        if result.get("status") == "error":
+            JOB_LEDGER[job_id]["status"] = "failed"
+            JOB_LEDGER[job_id]["error"] = result.get("message") or result.get("brief")
+        else:
+            JOB_LEDGER[job_id]["status"] = "completed"
+            JOB_LEDGER[job_id]["result"] = result
+    except Exception as exc:
         JOB_LEDGER[job_id]["status"] = "failed"
-        JOB_LEDGER[job_id]["error"] = result.get("brief")
-    else:
-        JOB_LEDGER[job_id]["status"] = "completed"
+        JOB_LEDGER[job_id]["error"] = f"Unhandled background task failure: {str(exc)}"
+    finally:
         JOB_LEDGER[job_id]["completed_at"] = time.time()
-        JOB_LEDGER[job_id]["execution_time_sec"] = round(time.time() - JOB_LEDGER[job_id]["started_at"], 2)
-        JOB_LEDGER[job_id]["result"] = result
+        JOB_LEDGER[job_id]["execution_time_sec"] = round(
+            JOB_LEDGER[job_id]["completed_at"] - JOB_LEDGER[job_id]["started_at"], 2
+        )
 
 @app.post("/webhook/crm-event", status_code=status.HTTP_202_ACCEPTED)
 def handle_crm_event(payload: CRMEventPayload, background_tasks: BackgroundTasks) -> Dict[str, Any]:
