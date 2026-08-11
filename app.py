@@ -181,8 +181,12 @@ with col_right:
                         try:
                             poll_res = requests.get(
                                 f"{backend_base_url.rstrip('/')}/jobs/{job_id}",
-                                timeout=8
+                                timeout=(3.0, 12.0)
                             )
+                        except requests.exceptions.ReadTimeout:
+                            # Background job can temporarily delay status checks; keep polling.
+                            n1.info("⏳ Waiting for status endpoint response...")
+                            continue
                         except requests.exceptions.RequestException as poll_err:
                             st.error(f"Polling request failed: {poll_err}")
                             break

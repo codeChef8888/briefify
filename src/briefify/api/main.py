@@ -1,4 +1,5 @@
 import os
+import asyncio
 import time
 import uuid
 from typing import Literal
@@ -64,8 +65,12 @@ def health_check() -> Dict[str, str]:
     """Health check endpoint to verify server status."""
     return {"status": "healthy", "service": "Briefify Agentic Engine"}
 
-async def async_agent_task(job_id: str, company_name: str, account_id: str):
-    """Background worker executing BigQuery extraction, Gemini synthesis, and publishing."""
+def run_agent_task_background(job_id: str, company_name: str, account_id: str):
+    """Background worker executing the async workflow in a threadpool task.
+
+    Using a sync wrapper keeps long blocking calls (BigQuery/SDK internals) off
+    the main event loop so `/jobs/{job_id}` polling remains responsive.
+    """
     if job_id not in JOB_LEDGER:
         return
 
@@ -73,8 +78,9 @@ async def async_agent_task(job_id: str, company_name: str, account_id: str):
     JOB_LEDGER[job_id]["started_at"] = time.time()
 
     try:
-        # Await the async pipeline directly without asyncio.run()
-        result = await run_agentic_workflow_async(company_name, job_id=job_id, account_id=account_id)
+        result = asyncio.run(
+            run_agentic_workflow_async(company_name, job_id=job_id, account_id=account_id)
+        )
 
         if result.get("status") == "error":
             JOB_LEDGER[job_id]["status"] = "failed"
@@ -112,7 +118,7 @@ def handle_crm_event(payload: CRMEventPayload, background_tasks: BackgroundTasks
     }
 
     # Decouple execution from HTTP request lifecycle
-    background_tasks.add_task(async_agent_task, job_id, payload.company_name, payload.account_id)
+    background_tasks.add_task(run_agent_task_background, job_id, payload.company_name, payload.account_id)
 
     return {
         "status": "accepted",
