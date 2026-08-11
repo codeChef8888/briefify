@@ -10,6 +10,7 @@ from google.adk.workflow import Workflow
 from google.adk.workflow import START
 
 from briefify.schemas.brief_schema import SalesBriefSchema, AccountTrigger
+from briefify.schemas.error_contract import build_error
 from briefify.nodes.telemetry_node import query_account_usage
 from briefify.nodes.strategist_node import strategist_agent
 from briefify.nodes.publisher_node import publish_brief_node
@@ -62,7 +63,28 @@ def _is_schema_validation_error(message: str) -> bool:
     return "validation" in lowered or "schema" in lowered
 
 
-def _build_terminal_response(status: str, company_name: str, message: str) -> Dict[str, Any]:
+def _build_terminal_response(
+    status: str,
+    company_name: str,
+    message: str,
+    *,
+    code: str | None = None,
+    stage: str = "agent_orchestrator",
+    retryable: bool = False,
+    details: Any | None = None,
+) -> Dict[str, Any]:
+    if status in {"error", "refused"}:
+        payload = build_error(
+            code=code or "WORKFLOW_EXECUTION_ERROR",
+            message=message,
+            stage=stage,
+            retryable=retryable,
+            status=status,
+            details=details,
+        )
+        payload["company_name"] = company_name
+        return payload
+
     return {
         "status": status,
         "company_name": company_name,
@@ -100,6 +122,7 @@ async def run_agentic_workflow_async(company_name: str, account_id: str = "ACC-1
         # Stream ADK execution through Directed Graph, collecting token usage from events
         final_output = {}
         terminal_error: str | None = None
+        terminal_error_payload: Dict[str, Any] | None = None
         usage_metadata = None
 
         try:
@@ -118,6 +141,7 @@ async def run_agentic_workflow_async(company_name: str, account_id: str = "ACC-1
                         final_output = out
                     elif out_status == "refused":
                         terminal_error = out.get("message") or "Model refused to generate output"
+                        terminal_error_payload = out
                         _log_terminal_event(
                             job_id=job_id,
                             company_name=company_name,
@@ -127,9 +151,18 @@ async def run_agentic_workflow_async(company_name: str, account_id: str = "ACC-1
                             status="refused",
                             error_message=terminal_error
                         )
-                        return _build_terminal_response("refused", company_name, terminal_error)
+                        return _build_terminal_response(
+                            "refused",
+                            company_name,
+                            terminal_error,
+                            code=out.get("code", "MODEL_REFUSAL"),
+                            stage=out.get("stage", "strategist_node"),
+                            retryable=bool(out.get("retryable", False)),
+                            details=out.get("details"),
+                        )
                     elif out_status == "error":
                         terminal_error = out.get("message") or "Workflow node emitted an error status"
+                        terminal_error_payload = out
         except Exception as exc:
             error_message = f"Runner execution failed: {str(exc)}"
             _log_terminal_event(
@@ -141,7 +174,14 @@ async def run_agentic_workflow_async(company_name: str, account_id: str = "ACC-1
                 status="error",
                 error_message=error_message
             )
-            return _build_terminal_response("error", company_name, f"Workflow execution failed: {str(exc)}")
+            return _build_terminal_response(
+                "error",
+                company_name,
+                f"Workflow execution failed: {str(exc)}",
+                code="RUNNER_EXECUTION_FAILED",
+                stage="agent_orchestrator",
+                retryable=True,
+            )
 
         if final_output:
             try:
@@ -176,7 +216,15 @@ async def run_agentic_workflow_async(company_name: str, account_id: str = "ACC-1
                 status="error",
                 error_message=terminal_error
             )
-            return _build_terminal_response("error", company_name, terminal_error)
+            return _build_terminal_response(
+                "error",
+                company_name,
+                terminal_error,
+                code=(terminal_error_payload or {}).get("code", "WORKFLOW_NODE_ERROR"),
+                stage=(terminal_error_payload or {}).get("stage", "workflow_node"),
+                retryable=bool((terminal_error_payload or {}).get("retryable", False)),
+                details=(terminal_error_payload or {}).get("details"),
+            )
 
         _log_terminal_event(
             job_id=job_id,
@@ -187,7 +235,14 @@ async def run_agentic_workflow_async(company_name: str, account_id: str = "ACC-1
             status="error",
             error_message="Pipeline terminated without generating output"
         )
-        return {"status": "error", "message": "Pipeline execution failed"}
+        return _build_terminal_response(
+            "error",
+            company_name,
+            "Pipeline execution failed",
+            code="PIPELINE_EMPTY_OUTPUT",
+            stage="agent_orchestrator",
+            retryable=True,
+        )
 
 
 if __name__ == "__main__":
