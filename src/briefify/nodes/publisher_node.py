@@ -28,6 +28,11 @@ def _detect_refusal(node_input: dict) -> str | None:
 
 def _build_brief_markdown(brief: SalesBriefSchema) -> str:
     """Build canonical markdown used by both storage and frontend rendering."""
+    talking_points = [
+        point if point.lstrip().startswith(("- ", "* ")) else f"- {point}"
+        for point in brief.actionable_talking_points
+    ]
+
     return f"""# 📊 Executive Strategic Brief: {brief.company_name}
 **Contract Tier:** {brief.contract_tier} | **Analysis Date:** {brief.analysis_date} | **Health Score:** {brief.overall_health_score}/100
 
@@ -48,7 +53,7 @@ def _build_brief_markdown(brief: SalesBriefSchema) -> str:
 {brief.strategic_signal_evidence}
 
 ## 4. Actionable Next Steps for Sales Call
-{chr(10).join(brief.actionable_talking_points)}
+{chr(10).join(talking_points)}
 """
 
 async def publish_brief_node(node_input: dict) -> Event:

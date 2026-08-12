@@ -10,7 +10,10 @@ def _render_brief_from_data(brief_data: dict) -> str:
     """Build markdown from structured brief payload when direct markdown is absent."""
     metrics = brief_data.get("metrics_summary", {}) if isinstance(brief_data, dict) else {}
     talking_points = brief_data.get("actionable_talking_points", []) if isinstance(brief_data, dict) else []
-    tp_text = "\n".join(talking_points) if isinstance(talking_points, list) and talking_points else "No talking points generated."
+    if isinstance(talking_points, list) and talking_points:
+        tp_text = "\n".join(f"- {point}" for point in talking_points)
+    else:
+        tp_text = "- No talking points generated."
 
     return f"""# 📊 Executive Strategic Brief: {brief_data.get('company_name', 'Unknown Account')}
 **Contract Tier:** {brief_data.get('contract_tier', 'N/A')} | **Analysis Date:** {brief_data.get('analysis_date', 'N/A')} | **Health Score:** {brief_data.get('overall_health_score', 'N/A')}/100
