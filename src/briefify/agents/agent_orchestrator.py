@@ -19,6 +19,7 @@ from briefify.agents.orchestrator_runtime import (
     is_schema_validation_error,
     log_and_return_error,
     log_terminal_event,
+    merge_usage_metadata,
     trace_workflow_event,
 )
 
@@ -136,7 +137,7 @@ async def run_agentic_workflow_async(company_name: str, account_id: str = "ACC-1
                 trace_workflow_event(event)
 
                 if hasattr(event, "usage_metadata") and event.usage_metadata:
-                    usage_metadata = event.usage_metadata
+                    usage_metadata = merge_usage_metadata(usage_metadata, event.usage_metadata)
 
                 out = getattr(event, "output", None)
                 if isinstance(out, dict) and out.get("status") in TERMINAL_STATES:
