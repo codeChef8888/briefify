@@ -235,7 +235,7 @@ with col_right:
                                 m1, m2, m3 = st.columns(3)
                                 m1.metric("Execution Time", f"{job_data.get('execution_time_sec', 0)}s")
                                 m2.metric("LLM API Calls", "1 Turn")
-                                m3.metric("Tool Cost Overhead", "$0.00")
+                                # m3.metric("Tool Cost Overhead", "$0.00")
                                 break
                                 
                             elif job_status == "failed":
