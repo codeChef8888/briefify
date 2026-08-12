@@ -1,6 +1,13 @@
 version: '3.8'
 
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: briefify_redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
   briefify-api:
     build:
       context: .
@@ -13,6 +20,11 @@ services:
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json
+      - REDIS_URL=redis://redis:6379/0
+      - JOB_TTL_SECONDS=86400
+      - IDEMPOTENCY_TTL_SECONDS=86400
+    depends_on:
+      - redis
     volumes:
       # Persist generated briefs and execution logs to host system
       - ./output:/app/output

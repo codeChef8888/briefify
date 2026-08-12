@@ -16,6 +16,9 @@ dependencies = [
     "uvicorn[standard]>=0.29",
     "python-dotenv>=1.2.2",
     "google-adk>=2.6.3",
+    "redis>=5.0",
+    "streamlit>=1.61.1",
+    "plotly>=6.9.0",
 ]
 
 [project.optional-dependencies]
@@ -28,5 +31,5 @@ dev = [
 where = ["src"]
 
 [tool.pytest.ini_options]
-testpaths = ["src/test"]
+testpaths = ["tests"]
 asyncio_mode = "auto"

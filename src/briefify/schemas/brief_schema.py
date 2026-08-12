@@ -1,6 +1,10 @@
 from pydantic import BaseModel, Field
 from typing import List, Literal
 
+class AccountTrigger(BaseModel):
+    account_id: str = Field(description="Unique CRM Account Identifier")
+    company_name: str = Field(description="Target Account Company Name")
+
 class DetailedTelemetryMetrics(BaseModel):
     seat_utilization_analysis: str = Field(
         description=(
@@ -47,6 +51,8 @@ class SalesBriefSchema(BaseModel):
         )
     )
     actionable_talking_points: List[str] = Field(
+        min_length=3,
+        max_length=3,
         description=(
             "Exactly 3 highly strategic, multi-sentence proposals for the sales call. Each talking point MUST "
             "start with a bold title (e.g., '**1. Present the Capacity Bottleneck Insight:** ...') and include "

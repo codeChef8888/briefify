@@ -1,185 +1,249 @@
-import time 
+import os
+import time
 import asyncio
-from typing import Dict, Any
+from typing import Any, Dict
 
-from google.genai import types
-from google.adk.agents import LlmAgent
-from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.adk.workflow import Workflow
+from google.adk.workflow import START
 
-from briefify.mcp.telemetry_mcp import query_account_usage
 from briefify.schemas.brief_schema import SalesBriefSchema
-from briefify.publishers.publisher import LocalCMSPublisher
-from briefify.telemetry.ledger import log_execution_event
-
-
-def fetch_telemetry_tool(company_name: str) -> str:
-    """Extracts historical software telemetry for a company from BigQuery.
-
-    Args:
-        company_name: Target company name (e.g., 'Acme Corp', 'Beta Logistics').
-
-    Returns:
-        JSON string with active users, seats, API calls, support tickets, and tier.
-    """
-    
-    result = query_account_usage(company_name=company_name)
-    
-    time.sleep(4)
-    
-    return result
-
-
-STRATEGIST_INSTRUCTION = """You are a Senior Strategic Sales Executive at an Enterprise AI company.
-Synthesize software telemetry into an executive brief payload strictly following the SalesBriefSchema JSON structure.
-
-CRITICAL GROUNDING RULES:
-1. You MUST directly leverage the pre-computed quantitative metrics inside `engineered_features` 
-   (`saturation_index_S_t`, `mau_delta_ΔU_6m`, `api_growth_ΔA_12m`, and `heuristic_signal`).
-2. Do not recalculate these values manually.
-3. Designate `primary_signal` strictly as one of the following exact strings:
-   - "🟢 UPSELL OPPORTUNITY" (If seat utilization > 90%, high API growth, low ticket volume)
-   - "🔴 CHURN / ENGAGEMENT RISK" (If MAU dropping, low feature adoption, or support ticket spikes)
-   - "🟡 UNTAPPED CAPACITY" (If under-utilizing allocated seats)
-4. Ensure all fields in SalesBriefSchema are fully populated. 
-"""
-
-# 1. Instantiate Specialized Agents (Using Gemini 3.5 Flash)
-data_agent = LlmAgent(
-    name="DataAgent",
-    model="gemini-3.5-flash", 
-    instruction=(
-            "Call fetch_telemetry_tool for the target company name provided in the user prompt. "
-            "Return the exact, unmodified JSON string output from the tool. "
-            "Do not summarize, alter, or omit any fields, ensuring 'engineered_features' "
-            "and 'telemetry' are preserved completely in the output state."
-        ),
-    tools=[fetch_telemetry_tool],
-    output_key="telemetry_raw"
+from briefify.nodes.telemetry_node import query_account_usage
+from briefify.nodes.strategist_node import strategist_agent
+from briefify.nodes.publisher_node import publish_brief_node
+from briefify.agents.orchestrator_runtime import (
+    TERMINAL_STATES,
+    build_runner,
+    build_runner_message,
+    extract_terminal_output,
+    is_schema_validation_error,
+    log_and_return_error,
+    log_terminal_event,
+    merge_usage_metadata,
+    trace_workflow_event,
 )
 
-strategist_agent = LlmAgent(
-    name="StrategistAgent",
-    model="gemini-3.5-flash",  
-    instruction=STRATEGIST_INSTRUCTION,
-    output_schema=SalesBriefSchema,  # Forces Gemini to generate JSON matching SalesBriefSchema
-    output_key="brief_output"
-)
+RATE_DELAY_SEC = float(os.getenv("WORKFLOW_RATE_DELAY_SEC", "0"))
+MAX_SCHEMA_RETRIES = int(os.getenv("WORKFLOW_MAX_SCHEMA_RETRIES", "2"))
+SCHEMA_RETRY_DELAY_SEC = float(os.getenv("WORKFLOW_SCHEMA_RETRY_DELAY_SEC", "0.5"))
+APP_NAME = "briefify_sales_brief"
+USER_ID = "sales_rep"
 
-# 2. Define Graph Workflow (Directed Node Edges)
+# Static Graph Assembly: Fetch -> Reason -> Publish
 pipeline = Workflow(
-    name="SequentialPipeline",
-    nodes=[data_agent, strategist_agent],
-    edges=[
-        ("START", data_agent),
-        (data_agent, strategist_agent)
-    ]
+    name="sales_brief_workflow",
+    description="Atomic Event-Driven Sales Brief Pipeline",
+    edges=[(START, query_account_usage, strategist_agent, publish_brief_node)]
 )
 
 # 3. Setup Session Management & Execution Runner
 session_service = InMemorySessionService()
-runner = Runner(
-    agent=pipeline,
-    app_name="briefify_sales_brief",
-    session_service=session_service,
-    auto_create_session=True
-)
+
+
+def _return_error(
+    *,
+    job_id: str,
+    company_name: str,
+    account_id: str,
+    start_perf: float,
+    usage_metadata: Any,
+    session_id: str,
+    retry_count: int,
+    message: str,
+    code: str,
+    stage: str,
+    retryable: bool,
+    details: Any | None = None,
+    status: str = "error",
+) -> Dict[str, Any]:
+    return log_and_return_error(
+        job_id=job_id,
+        company_name=company_name,
+        account_id=account_id,
+        start_perf=start_perf,
+        usage_metadata=usage_metadata,
+        message=message,
+        code=code,
+        stage=stage,
+        retryable=retryable,
+        session_id=session_id,
+        retry_count=retry_count,
+        app_name=APP_NAME,
+        max_schema_retries=MAX_SCHEMA_RETRIES,
+        details=details,
+        status=status,
+    )
+
+
+def _log_success(
+    *,
+    job_id: str,
+    company_name: str,
+    account_id: str,
+    start_perf: float,
+    usage_metadata: Any,
+    session_id: str,
+    retry_count: int,
+) -> None:
+    log_terminal_event(
+        job_id=job_id,
+        company_name=company_name,
+        account_id=account_id,
+        start_perf=start_perf,
+        usage_metadata=usage_metadata,
+        status="success",
+        app_name=APP_NAME,
+        max_schema_retries=MAX_SCHEMA_RETRIES,
+        pipeline_stage="publish_brief_node",
+        retry_count=retry_count,
+        session_id=session_id,
+    )
 
 
 async def run_agentic_workflow_async(company_name: str, account_id: str = "ACC-1001", job_id: str = "manual_run") -> Dict[str, Any]:
     """Orchestrates multi-agent execution using Google ADK Runner and Workflow graph."""
-    # Prevent back-to-back webhook rate bursts
-    await asyncio.sleep(4)
-    
+    # Optional delay to smooth bursty webhook traffic.
+    if RATE_DELAY_SEC > 0:
+        await asyncio.sleep(RATE_DELAY_SEC)
+
     print(f"\n[Pipeline Triggered] Processing Account: {company_name}")
-    start_time = time.time()
-    
-    app_name = "briefify_sales_brief"
-    user_id = "sales_rep"
-    session_id = f"session_{account_id}_{int(start_time)}"
+    start_perf = time.perf_counter()
+    session_id = f"session_{account_id}_{int(time.time())}"
 
-    print(" └── Executing ADK Graph Workflow (DataAgent -> StrategistAgent)...")
-    prompt_content = types.Content(
-        role="user",
-        parts=[types.Part(text=f"Analyze sales brief telemetry for account: {company_name}")]
-    )
+    runner = build_runner(pipeline=pipeline, app_name=APP_NAME, session_service=session_service)
+    message = build_runner_message(account_id, company_name)
     
-    # Stream ADK execution through Directed Graph, collecting token usage from events
-    usage_metadata = None
-    async for event in runner.run_async(
-        user_id=user_id,
-        session_id=session_id,
-        new_message=prompt_content
-    ):
-        if hasattr(event, "usage_metadata") and event.usage_metadata:
-            usage_metadata = event.usage_metadata
+    schema_retry_count = 0
 
-    # Retrieve output state from the auto-created session
-    session = await session_service.get_session(
-        app_name=app_name,
-        user_id=user_id,
-        session_id=session_id
-    )
-    print(f" └── Session '{session_id}' completed. Extracting outputs...")
-    brief_raw = session.state.get("brief_output", "")
-    
-    try:
-        # Check type before validating with Pydantic
-        if isinstance(brief_raw, SalesBriefSchema):
-            validated_brief = brief_raw
-        elif isinstance(brief_raw, dict):
-            validated_brief = SalesBriefSchema.model_validate(brief_raw)
-        elif isinstance(brief_raw, str):
-            clean_json = brief_raw.strip()
-            if clean_json.startswith("```"):
-                clean_json = clean_json.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-            validated_brief = SalesBriefSchema.model_validate_json(clean_json)
-        else:
-            raise ValueError(f"Unsupported output type in session state: {type(brief_raw)}")
-    except Exception as e:
-        print(f" ❌ [Pipeline Failed] Schema validation error: {e}")
-        print(f" 🔍 [Raw LLM Output]: {brief_raw}")
-        latency_ms = (time.time() - start_time) * 1000
-        log_execution_event(
+    while True:
+        # Stream ADK execution through Directed Graph, collecting token usage from events
+        final_output = {}
+        terminal_error: str | None = None
+        terminal_error_payload: Dict[str, Any] = {
+            "code": "WORKFLOW_NODE_ERROR",
+            "stage": "workflow_node",
+            "retryable": False,
+            "details": None,
+        }
+        usage_metadata = None
+
+        try:
+            async for event in runner.run_async(
+                user_id=USER_ID,
+                session_id=session_id,
+                new_message=message
+            ):
+                print(f"[Workflow Event] {event.__class__.__name__} - {getattr(event, 'output', None)}")
+                trace_workflow_event(event)
+
+                if hasattr(event, "usage_metadata") and event.usage_metadata:
+                    usage_metadata = merge_usage_metadata(usage_metadata, event.usage_metadata)
+
+                out = getattr(event, "output", None)
+                if isinstance(out, dict) and out.get("status") in TERMINAL_STATES:
+                    out_status, out_message, out_code, out_retryable, out_context = extract_terminal_output(out)
+                    out_stage, out_details = out_context
+
+                    if out_status == "published":
+                        final_output = out
+                    elif out_status == "refused":
+                        return _return_error(
+                            job_id=job_id,
+                            company_name=company_name,
+                            account_id=account_id,
+                            start_perf=start_perf,
+                            usage_metadata=usage_metadata,
+                            message=out_message,
+                            code=out_code,
+                            stage=out_stage,
+                            retryable=out_retryable,
+                            session_id=session_id,
+                            retry_count=schema_retry_count,
+                            details=out_details,
+                            status="refused",
+                        )
+                    elif out_status == "error":
+                        terminal_error = out_message
+                        terminal_error_payload = {
+                            "code": out_code,
+                            "stage": out_stage,
+                            "retryable": out_retryable,
+                            "details": out_details,
+                        }
+        except Exception as exc:
+            return _return_error(
+                job_id=job_id,
+                company_name=company_name,
+                account_id=account_id,
+                start_perf=start_perf,
+                usage_metadata=usage_metadata,
+                message=f"Workflow execution failed: {str(exc)}",
+                code="RUNNER_EXECUTION_FAILED",
+                stage="agent_orchestrator",
+                retryable=True,
+                session_id=session_id,
+                retry_count=schema_retry_count,
+            )
+
+        if final_output:
+            try:
+                brief_data = final_output.get("brief_data")
+                SalesBriefSchema.model_validate(brief_data)
+            except Exception as exc:
+                terminal_error = f"Publisher validation failed: {str(exc)}"
+                terminal_error_payload = {
+                    "code": "PUBLISHER_VALIDATION_FAILED",
+                    "stage": "publisher_node",
+                    "retryable": False,
+                    "details": None,
+                }
+            else:
+                _log_success(
+                    job_id=job_id,
+                    company_name=company_name,
+                    account_id=account_id,
+                    start_perf=start_perf,
+                    usage_metadata=usage_metadata,
+                    retry_count=schema_retry_count,
+                    session_id=session_id,
+                )
+                return final_output
+
+        if terminal_error:
+            is_schema_invalid = is_schema_validation_error(terminal_error)
+            if is_schema_invalid and schema_retry_count < MAX_SCHEMA_RETRIES:
+                schema_retry_count += 1
+                await asyncio.sleep(SCHEMA_RETRY_DELAY_SEC * schema_retry_count)
+                continue
+
+            return _return_error(
+                job_id=job_id,
+                company_name=company_name,
+                account_id=account_id,
+                start_perf=start_perf,
+                usage_metadata=usage_metadata,
+                message=terminal_error,
+                code=terminal_error_payload.get("code", "WORKFLOW_NODE_ERROR"),
+                stage=terminal_error_payload.get("stage", "workflow_node"),
+                retryable=bool(terminal_error_payload.get("retryable", False)),
+                session_id=session_id,
+                retry_count=schema_retry_count,
+                details=terminal_error_payload.get("details"),
+            )
+
+        return _return_error(
             job_id=job_id,
             company_name=company_name,
             account_id=account_id,
-            latency_ms=latency_ms,
+            start_perf=start_perf,
             usage_metadata=usage_metadata,
-            status="error",
-            error_message=str(e)
+            message="Pipeline execution failed",
+            code="PIPELINE_EMPTY_OUTPUT",
+            stage="agent_orchestrator",
+            retryable=True,
+            session_id=session_id,
+            retry_count=schema_retry_count,
         )
-        return {
-            "status": "error",
-            "company_name": company_name,
-            "brief": f"Schema validation failed: {str(e)}. Raw output: {brief_raw}"
-        }
-
-    # Publish output via Publisher Adapter
-    publisher = LocalCMSPublisher()
-    artifact_location = publisher.publish(account_id, validated_brief)
-    
-    latency_ms = (time.time() - start_time) * 1000
-
-    # Write FinOps Telemetry Log Entry
-    log_execution_event(
-        job_id=job_id,
-        company_name=company_name,
-        account_id=account_id,
-        latency_ms=latency_ms,
-        usage_metadata=usage_metadata,
-        status="success"
-    )
-    
-    print(" [Pipeline Complete] Strategic brief generated successfully.\n")
-    return {
-        "status": "success",
-        "company_name": company_name,
-        "brief": brief_raw,
-        "published_location": artifact_location,
-        "data": validated_brief.model_dump()
-    }
 
 
 if __name__ == "__main__":

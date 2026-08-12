@@ -27,7 +27,7 @@ def compute_telemetry_features(records: List[Dict[str, Any]]) -> TelemetryFeatur
     from historical monthly telemetry snapshots (sorted newest first).
     """
     if not records or len(records) < 2:
-        return {"error": "Insufficient historical data for feature engineering."}
+        raise ValueError("Insufficient historical data for feature engineering (minimum 2 months required).")
 
     latest = records[0]
     six_months_ago = records[min(5, len(records) - 1)]
