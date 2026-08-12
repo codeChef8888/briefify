@@ -6,6 +6,14 @@ FastAPI webhook -> Google ADK workflow graph -> BigQuery telemetry retrieval -> 
 
 For a full design walkthrough, see ARCHITECTURE.md.
 
+## Repository Layout (Why Files Exist Outside src)
+
+This repository follows a standard Python src-layout:
+- `src/briefify`: importable application package code.
+- root-level files (`pyproject.toml`, `README.md`, `Dockerfile`, `docker-compose.yml`, `.env.example`, `requirements.txt`): project metadata, docs, and runtime/deployment tooling.
+- `scripts/generate_telemetry.py`: canonical telemetry dataset generator.
+
+
 ## 1. Overview
 
 Core stack:
