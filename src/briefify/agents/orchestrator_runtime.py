@@ -15,6 +15,7 @@ from briefify.telemetry.ledger import log_execution_event
 TERMINAL_STATES = {"published", "refused", "error"}
 DEBUG_NODE_IO = os.getenv("WORKFLOW_DEBUG_NODE_IO", "0").lower() in {"1", "true", "yes", "on"}
 DEBUG_NODE_IO_MAX_CHARS = int(os.getenv("WORKFLOW_DEBUG_NODE_IO_MAX_CHARS", "5000"))
+DEBUG_USAGE_METADATA = os.getenv("WORKFLOW_DEBUG_USAGE_METADATA", "0").lower() in {"1", "true", "yes", "on"}
 
 
 def latency_ms(start_perf: float) -> float:
@@ -85,6 +86,87 @@ def extract_terminal_output(out: dict) -> tuple[str, str, str, bool, Any | None]
     out_retryable = bool(out.get("retryable", False))
     out_details = out.get("details")
     return out_status, out_message, out_code, out_retryable, (out_stage, out_details)
+
+
+def merge_usage_metadata(existing: Any, incoming: Any) -> Dict[str, int]:
+    """Consolidate usage across events into canonical token counters.
+
+    ADK may emit usage on multiple events with different field names.
+    We avoid last-event overwrites dropping completion tokens, while also
+    avoiding additive overcounting when the same usage appears on multiple events.
+    """
+
+    def _extract(scope: Any, keys: tuple[str, ...]) -> int:
+        if not scope:
+            return 0
+        if isinstance(scope, dict):
+            for key in keys:
+                if key in scope and scope.get(key) is not None:
+                    try:
+                        return int(scope.get(key) or 0)
+                    except (TypeError, ValueError):
+                        return 0
+            nested = scope.get("usage")
+            if isinstance(nested, dict):
+                for key in keys:
+                    if key in nested and nested.get(key) is not None:
+                        try:
+                            return int(nested.get(key) or 0)
+                        except (TypeError, ValueError):
+                            return 0
+            return 0
+
+        for key in keys:
+            value = getattr(scope, key, None)
+            if value is not None:
+                try:
+                    return int(value or 0)
+                except (TypeError, ValueError):
+                    return 0
+
+        nested = getattr(scope, "usage", None)
+        if isinstance(nested, dict):
+            for key in keys:
+                if key in nested and nested.get(key) is not None:
+                    try:
+                        return int(nested.get(key) or 0)
+                    except (TypeError, ValueError):
+                        return 0
+        return 0
+
+    consolidated = {
+        "prompt_token_count": 0,
+        "completion_token_count": 0,
+        "total_token_count": 0,
+    }
+
+    if isinstance(existing, dict):
+        consolidated["prompt_token_count"] = int(existing.get("prompt_token_count", 0) or 0)
+        consolidated["completion_token_count"] = int(existing.get("completion_token_count", 0) or 0)
+        consolidated["total_token_count"] = int(existing.get("total_token_count", 0) or 0)
+
+    prompt = _extract(incoming, ("prompt_token_count", "prompt_tokens", "input_token_count", "input_tokens"))
+    completion = _extract(
+        incoming,
+        (
+            "completion_token_count",
+            "completion_tokens",
+            "output_token_count",
+            "output_tokens",
+            "candidates_token_count",
+            "candidate_token_count",
+        ),
+    )
+    total = _extract(incoming, ("total_token_count", "total_tokens"))
+
+    # Use max-by-field to preserve non-zero values without double counting.
+    consolidated["prompt_token_count"] = max(consolidated["prompt_token_count"], prompt)
+    consolidated["completion_token_count"] = max(consolidated["completion_token_count"], completion)
+
+    derived_total = consolidated["prompt_token_count"] + consolidated["completion_token_count"]
+    consolidated["total_token_count"] = max(consolidated["total_token_count"], total, derived_total)
+
+    return consolidated
 
 
 def log_terminal_event(
@@ -192,3 +274,8 @@ def trace_workflow_event(event: Any) -> None:
     output_text = _clip(_safe_dump(event_output), DEBUG_NODE_IO_MAX_CHARS) if event_output is not None else "<none>"
 
     print(f"[Workflow Trace] stage={event_stage} input={input_text} output={output_text}")
+
+    if DEBUG_USAGE_METADATA:
+        usage = getattr(event, "usage_metadata", None)
+        usage_text = _clip(_safe_dump(usage), DEBUG_NODE_IO_MAX_CHARS) if usage is not None else "<none>"
+        print(f"[Workflow Usage] stage={event_stage} usage_metadata={usage_text}")
