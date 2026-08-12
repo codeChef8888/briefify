@@ -15,14 +15,57 @@ INPUT_COST_PER_MILLION = float(os.getenv("BRIEFIFY_INPUT_COST_PER_MILLION", "0.0
 OUTPUT_COST_PER_MILLION = float(os.getenv("BRIEFIFY_OUTPUT_COST_PER_MILLION", "0.30"))
 
 
+USAGE_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
+    "prompt_token_count": ("prompt_token_count", "prompt_tokens", "input_token_count", "input_tokens"),
+    "completion_token_count": (
+        "completion_token_count",
+        "completion_tokens",
+        "output_token_count",
+        "output_tokens",
+        "candidates_token_count",
+        "candidate_token_count",
+    ),
+    "total_token_count": ("total_token_count", "total_tokens"),
+}
+
+
+def _coerce_int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _extract_usage_value(usage_metadata: Any, field_name: str) -> int:
     if not usage_metadata:
         return 0
 
-    if isinstance(usage_metadata, dict):
-        return int(usage_metadata.get(field_name, 0) or 0)
+    aliases = USAGE_FIELD_ALIASES.get(field_name, (field_name,))
 
-    return int(getattr(usage_metadata, field_name, 0) or 0)
+    if isinstance(usage_metadata, dict):
+        search_space: list[dict[str, Any]] = [usage_metadata]
+        nested_usage = usage_metadata.get("usage")
+        if isinstance(nested_usage, dict):
+            search_space.append(nested_usage)
+
+        for scope in search_space:
+            for alias in aliases:
+                if alias in scope:
+                    return _coerce_int(scope.get(alias))
+        return 0
+
+    for alias in aliases:
+        value = getattr(usage_metadata, alias, None)
+        if value is not None:
+            return _coerce_int(value)
+
+    nested_usage = getattr(usage_metadata, "usage", None)
+    if isinstance(nested_usage, dict):
+        for alias in aliases:
+            if alias in nested_usage:
+                return _coerce_int(nested_usage.get(alias))
+
+    return 0
 
 
 def log_execution_event(
@@ -45,6 +88,10 @@ def log_execution_event(
     prompt_tokens = _extract_usage_value(usage_metadata, "prompt_token_count")
     completion_tokens = _extract_usage_value(usage_metadata, "completion_token_count")
     total_tokens = _extract_usage_value(usage_metadata, "total_token_count")
+
+    # Some SDK events omit total while still reporting prompt/output.
+    if total_tokens == 0 and (prompt_tokens > 0 or completion_tokens > 0):
+        total_tokens = prompt_tokens + completion_tokens
 
     # Calculate estimated cost from configurable per-million token rates.
     input_cost_per_token = INPUT_COST_PER_MILLION / 1_000_000
