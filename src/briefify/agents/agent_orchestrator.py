@@ -39,6 +39,66 @@ pipeline = Workflow(
 session_service = InMemorySessionService()
 
 
+def _return_error(
+    *,
+    job_id: str,
+    company_name: str,
+    account_id: str,
+    start_perf: float,
+    usage_metadata: Any,
+    session_id: str,
+    retry_count: int,
+    message: str,
+    code: str,
+    stage: str,
+    retryable: bool,
+    details: Any | None = None,
+    status: str = "error",
+) -> Dict[str, Any]:
+    return log_and_return_error(
+        job_id=job_id,
+        company_name=company_name,
+        account_id=account_id,
+        start_perf=start_perf,
+        usage_metadata=usage_metadata,
+        message=message,
+        code=code,
+        stage=stage,
+        retryable=retryable,
+        session_id=session_id,
+        retry_count=retry_count,
+        app_name=APP_NAME,
+        max_schema_retries=MAX_SCHEMA_RETRIES,
+        details=details,
+        status=status,
+    )
+
+
+def _log_success(
+    *,
+    job_id: str,
+    company_name: str,
+    account_id: str,
+    start_perf: float,
+    usage_metadata: Any,
+    session_id: str,
+    retry_count: int,
+) -> None:
+    log_terminal_event(
+        job_id=job_id,
+        company_name=company_name,
+        account_id=account_id,
+        start_perf=start_perf,
+        usage_metadata=usage_metadata,
+        status="success",
+        app_name=APP_NAME,
+        max_schema_retries=MAX_SCHEMA_RETRIES,
+        pipeline_stage="publish_brief_node",
+        retry_count=retry_count,
+        session_id=session_id,
+    )
+
+
 async def run_agentic_workflow_async(company_name: str, account_id: str = "ACC-1001", job_id: str = "manual_run") -> Dict[str, Any]:
     """Orchestrates multi-agent execution using Google ADK Runner and Workflow graph."""
     # Optional delay to smooth bursty webhook traffic.
@@ -86,7 +146,7 @@ async def run_agentic_workflow_async(company_name: str, account_id: str = "ACC-1
                     if out_status == "published":
                         final_output = out
                     elif out_status == "refused":
-                        return log_and_return_error(
+                        return _return_error(
                             job_id=job_id,
                             company_name=company_name,
                             account_id=account_id,
@@ -98,8 +158,6 @@ async def run_agentic_workflow_async(company_name: str, account_id: str = "ACC-1
                             retryable=out_retryable,
                             session_id=session_id,
                             retry_count=schema_retry_count,
-                            app_name=APP_NAME,
-                            max_schema_retries=MAX_SCHEMA_RETRIES,
                             details=out_details,
                             status="refused",
                         )
@@ -112,7 +170,7 @@ async def run_agentic_workflow_async(company_name: str, account_id: str = "ACC-1
                             "details": out_details,
                         }
         except Exception as exc:
-            return log_and_return_error(
+            return _return_error(
                 job_id=job_id,
                 company_name=company_name,
                 account_id=account_id,
@@ -124,8 +182,6 @@ async def run_agentic_workflow_async(company_name: str, account_id: str = "ACC-1
                 retryable=True,
                 session_id=session_id,
                 retry_count=schema_retry_count,
-                app_name=APP_NAME,
-                max_schema_retries=MAX_SCHEMA_RETRIES,
             )
 
         if final_output:
@@ -141,16 +197,12 @@ async def run_agentic_workflow_async(company_name: str, account_id: str = "ACC-1
                     "details": None,
                 }
             else:
-                log_terminal_event(
+                _log_success(
                     job_id=job_id,
                     company_name=company_name,
                     account_id=account_id,
                     start_perf=start_perf,
                     usage_metadata=usage_metadata,
-                    status="success",
-                    app_name=APP_NAME,
-                    max_schema_retries=MAX_SCHEMA_RETRIES,
-                    pipeline_stage="publish_brief_node",
                     retry_count=schema_retry_count,
                     session_id=session_id,
                 )
@@ -163,7 +215,7 @@ async def run_agentic_workflow_async(company_name: str, account_id: str = "ACC-1
                 await asyncio.sleep(SCHEMA_RETRY_DELAY_SEC * schema_retry_count)
                 continue
 
-            return log_and_return_error(
+            return _return_error(
                 job_id=job_id,
                 company_name=company_name,
                 account_id=account_id,
@@ -175,12 +227,10 @@ async def run_agentic_workflow_async(company_name: str, account_id: str = "ACC-1
                 retryable=bool(terminal_error_payload.get("retryable", False)),
                 session_id=session_id,
                 retry_count=schema_retry_count,
-                app_name=APP_NAME,
-                max_schema_retries=MAX_SCHEMA_RETRIES,
                 details=terminal_error_payload.get("details"),
             )
 
-        return log_and_return_error(
+        return _return_error(
             job_id=job_id,
             company_name=company_name,
             account_id=account_id,
@@ -192,8 +242,6 @@ async def run_agentic_workflow_async(company_name: str, account_id: str = "ACC-1
             retryable=True,
             session_id=session_id,
             retry_count=schema_retry_count,
-            app_name=APP_NAME,
-            max_schema_retries=MAX_SCHEMA_RETRIES,
         )
 
 
